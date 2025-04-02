@@ -22,6 +22,114 @@ declare module 'jspdf' {
     }
 }
 
+// Fonction pour calculer le tableau d'amortissement avec différé total puis partiel
+function calculerTableauAmortissementAvecDiffereCombine(montantEmprunt: number, pretData: PretData): LigneAmortissement[] {
+    const { tauxNominal, tauxAssurance, dureePret, differeTotal, differePartiel } = pretData;
+    
+    // Conversion des années en mois
+    const dureeEnMois = dureePret * 12;
+    
+    // Calcul du taux mensuel
+    const tauxMensuel = tauxNominal / 12;
+    const tauxAssuranceMensuel = tauxAssurance / 12;
+    
+    // Calcul de la mensualité (hors assurance et hors période de différé)
+    const mensualiteHorsAssurance = (montantEmprunt * tauxMensuel * Math.pow(1 + tauxMensuel, dureeEnMois - differeTotal - differePartiel)) / (Math.pow(1 + tauxMensuel, dureeEnMois - differeTotal - differePartiel) - 1);
+    const mensualiteAssurance = montantEmprunt * tauxAssuranceMensuel;
+    
+    // Initialisation du tableau d'amortissement
+    const tableau: LigneAmortissement[] = [];
+    
+    // Date actuelle pour le calcul des dates d'échéance
+    const dateActuelle = new Date();
+    let soldeRestant = montantEmprunt;
+    let interetsCumules = 0;
+    
+    // Période de différé total (remboursement de l'assurance uniquement)
+    for (let i = 1; i <= differeTotal; i++) {
+        const dateEcheance = new Date(dateActuelle);
+        dateEcheance.setMonth(dateActuelle.getMonth() + i);
+        const annee = Math.ceil(i / 12);
+        
+        tableau.push({
+            numero: i,
+            date: `${dateEcheance.getMonth() + 1}/${dateEcheance.getFullYear()}`,
+            soldeInitial: soldeRestant,
+            mensualite: 0,
+            capitalRembourse: 0,
+            interets: 0,
+            mensualiteAssurance: mensualiteAssurance,
+            mensualiteTotale: mensualiteAssurance,
+            resteARembourser: soldeRestant,
+            versementSupplementaire: 0,
+            versementTotal: mensualiteAssurance,
+            interetsCumules: interetsCumules,
+            annee: annee
+        });
+    }
+    
+    // Période de différé partiel (remboursement des intérêts et de l'assurance)
+    for (let i = 1; i <= differePartiel; i++) {
+        const dateEcheance = new Date(dateActuelle);
+        dateEcheance.setMonth(dateActuelle.getMonth() + differeTotal + i);
+        const annee = Math.ceil((differeTotal + i) / 12);
+        
+        const interets = soldeRestant * tauxMensuel;
+        interetsCumules += interets;
+        
+        tableau.push({
+            numero: differeTotal + i,
+            date: `${dateEcheance.getMonth() + 1}/${dateEcheance.getFullYear()}`,
+            soldeInitial: soldeRestant,
+            mensualite: interets,
+            capitalRembourse: 0,
+            interets: interets,
+            mensualiteAssurance: mensualiteAssurance,
+            mensualiteTotale: interets + mensualiteAssurance,
+            resteARembourser: soldeRestant,
+            versementSupplementaire: 0,
+            versementTotal: interets + mensualiteAssurance,
+            interetsCumules: interetsCumules,
+            annee: annee
+        });
+    }
+    
+    // Période d'amortissement normal
+    for (let i = 1; i <= dureeEnMois - differeTotal - differePartiel; i++) {
+        const dateEcheance = new Date(dateActuelle);
+        dateEcheance.setMonth(dateActuelle.getMonth() + differeTotal + differePartiel + i);
+        const annee = Math.ceil((differeTotal + differePartiel + i) / 12);
+        
+        const interets = soldeRestant * tauxMensuel;
+        interetsCumules += interets;
+        const capitalRembourse = mensualiteHorsAssurance - interets;
+        soldeRestant -= capitalRembourse;
+        
+        // Ajustement pour le dernier mois (arrondi)
+        if (i === dureeEnMois - differeTotal - differePartiel) {
+            soldeRestant = 0;
+        }
+        
+        tableau.push({
+            numero: differeTotal + differePartiel + i,
+            date: `${dateEcheance.getMonth() + 1}/${dateEcheance.getFullYear()}`,
+            soldeInitial: soldeRestant + capitalRembourse,
+            mensualite: mensualiteHorsAssurance,
+            capitalRembourse: capitalRembourse,
+            interets: interets,
+            mensualiteAssurance: mensualiteAssurance,
+            mensualiteTotale: mensualiteHorsAssurance + mensualiteAssurance,
+            resteARembourser: soldeRestant,
+            versementSupplementaire: 0,
+            versementTotal: mensualiteHorsAssurance + mensualiteAssurance,
+            interetsCumules: interetsCumules,
+            annee: annee
+        });
+    }
+    
+    return tableau;
+}
+
 // Éléments DOM
 // Données du bien
 const prixBienFAIInput = document.getElementById('prixBienFAI') as HTMLInputElement;
@@ -77,8 +185,11 @@ const comparisonTable = document.getElementById('comparisonTable') as HTMLTableE
 const tabs = document.querySelectorAll('.tab');
 const tabContents = document.querySelectorAll('.tab-content');
 
-// Bouton de téléchargement
-const downloadBtn = document.getElementById('downloadBtn') as HTMLButtonElement;
+// Bouton de partage (remplace le bouton de téléchargement)
+const shareBtn = document.getElementById('downloadBtn') as HTMLButtonElement;
+if (shareBtn) {
+    shareBtn.textContent = 'Générer un lien public';
+}
 
 // Variables pour stocker les résultats des calculs
 let resultat1: ResultatCalcul | null = null;
@@ -211,7 +322,9 @@ function afficherResultats1() {
     afficherEcheancier(echeancier1, echeancierContent1);
     
     // Génération du tableau d'amortissement
-    if (pretData.differeTotal > 0) {
+    if (pretData.differeTotal > 0 && pretData.differePartiel > 0) {
+        tableauAmortissement1 = calculerTableauAmortissementAvecDiffereCombine(montantEmprunt, pretData);
+    } else if (pretData.differeTotal > 0) {
         tableauAmortissement1 = calculerTableauAmortissementAvecDiffereTotal(montantEmprunt, pretData);
     } else if (pretData.differePartiel > 0) {
         tableauAmortissement1 = calculerTableauAmortissementAvecDifferePartiel(montantEmprunt, pretData);
@@ -255,7 +368,9 @@ function afficherResultats2() {
     afficherEcheancier(echeancier2, echeancierContent2);
     
     // Génération du tableau d'amortissement
-    if (pretData.differeTotal > 0) {
+    if (pretData.differeTotal > 0 && pretData.differePartiel > 0) {
+        tableauAmortissement2 = calculerTableauAmortissementAvecDiffereCombine(montantEmprunt, pretData);
+    } else if (pretData.differeTotal > 0) {
         tableauAmortissement2 = calculerTableauAmortissementAvecDiffereTotal(montantEmprunt, pretData);
     } else if (pretData.differePartiel > 0) {
         tableauAmortissement2 = calculerTableauAmortissementAvecDifferePartiel(montantEmprunt, pretData);
@@ -305,18 +420,23 @@ function afficherEcheancier(echeancier: EcheancierPeriode[], container: HTMLElem
 }
 
 // Fonction pour afficher le tableau d'amortissement avec pagination
-function afficherTableauAmortissement(
-    tableau: LigneAmortissement[], 
-    container: HTMLElement, 
-    rowsPerPage: number, 
-    currentPage: number, 
-    paginationContainer: HTMLElement
-) {
-    // Calcul des indices de début et de fin pour la pagination
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    const endIndex = startIndex + rowsPerPage;
-    const tableauPage = tableau.slice(startIndex, endIndex);
+function afficherTableauAmortissement(tableau: LigneAmortissement[], container: HTMLElement, rowsPerPage: number, currentPage: number, paginationContainer: HTMLElement) {
+    // Calcul du nombre total de pages
+    const totalPages = Math.ceil(tableau.length / rowsPerPage);
     
+    // Ajustement de la page courante si nécessaire
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+    }
+    
+    // Calcul des indices de début et de fin pour la page courante
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    const endIndex = Math.min(startIndex + rowsPerPage, tableau.length);
+    
+    // Extraction des lignes pour la page courante
+    const currentRows = tableau.slice(startIndex, endIndex);
+    
+    // Génération du tableau HTML
     let html = `
         <table>
             <thead>
@@ -335,7 +455,7 @@ function afficherTableauAmortissement(
             <tbody>
     `;
     
-    tableauPage.forEach(ligne => {
+    currentRows.forEach(ligne => {
         html += `
             <tr>
                 <td>${ligne.numero}</td>
@@ -358,166 +478,170 @@ function afficherTableauAmortissement(
     
     container.innerHTML = html;
     
-    // Génération des boutons de pagination
-    const totalPages = Math.ceil(tableau.length / rowsPerPage);
-    let paginationHtml = '';
-    
-    // Bouton précédent
-    paginationHtml += `
-        <button class="pagination-button ${currentPage === 1 ? 'disabled' : ''}" 
-                data-page="prev" ${currentPage === 1 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i>
-        </button>
+    // Génération des contrôles de pagination
+    let paginationHtml = `
+        <div class="pagination-controls">
+            <div class="pagination-buttons">
+                <button class="pagination-button" data-page="first" ${currentPage === 1 ? 'disabled' : ''}>«</button>
+                <button class="pagination-button" data-page="prev" ${currentPage === 1 ? 'disabled' : ''}>‹</button>
     `;
     
-    // Pages
-    const maxVisiblePages = 5;
-    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-    
-    if (endPage - startPage + 1 < maxVisiblePages) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-    
-    if (startPage > 1) {
-        paginationHtml += `
-            <button class="pagination-button" data-page="1">1</button>
-            ${startPage > 2 ? '<span>...</span>' : ''}
-        `;
-    }
+    // Affichage des numéros de page (max 5 pages autour de la page courante)
+    const startPage = Math.max(1, currentPage - 2);
+    const endPage = Math.min(totalPages, startPage + 4);
     
     for (let i = startPage; i <= endPage; i++) {
         paginationHtml += `
-            <button class="pagination-button ${i === currentPage ? 'active' : ''}" 
-                    data-page="${i}">
-                ${i}
-            </button>
+            <button class="pagination-button ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>
         `;
     }
     
-    if (endPage < totalPages) {
-        paginationHtml += `
-            ${endPage < totalPages - 1 ? '<span>...</span>' : ''}
-            <button class="pagination-button" data-page="${totalPages}">${totalPages}</button>
-        `;
-    }
-    
-    // Bouton suivant
     paginationHtml += `
-        <button class="pagination-button ${currentPage === totalPages ? 'disabled' : ''}" 
-                data-page="next" ${currentPage === totalPages ? 'disabled' : ''}>
-            <i class="fas fa-chevron-right"></i>
-        </button>
+                <button class="pagination-button" data-page="next" ${currentPage === totalPages ? 'disabled' : ''}>›</button>
+                <button class="pagination-button" data-page="last" ${currentPage === totalPages ? 'disabled' : ''}>»</button>
+            </div>
+            <div class="rows-per-page">
+                <span>Lignes par page:</span>
+                <select>
+                    <option value="10" ${rowsPerPage === 10 ? 'selected' : ''}>10</option>
+                    <option value="25" ${rowsPerPage === 25 ? 'selected' : ''}>25</option>
+                    <option value="50" ${rowsPerPage === 50 ? 'selected' : ''}>50</option>
+                    <option value="100" ${rowsPerPage === 100 ? 'selected' : ''}>100</option>
+                </select>
+            </div>
+        </div>
     `;
     
     paginationContainer.innerHTML = paginationHtml;
     
-    // Ajout des événements aux boutons de pagination
-    const paginationButtons = paginationContainer.querySelectorAll('.pagination-button');
-    paginationButtons.forEach(button => {
+    // Ajout des écouteurs d'événements pour les boutons de pagination
+    const buttons = paginationContainer.querySelectorAll('.pagination-button');
+    buttons.forEach(button => {
         button.addEventListener('click', (e) => {
-            const target = e.currentTarget as HTMLElement;
-            const page = target.getAttribute('data-page');
+            const target = e.target as HTMLButtonElement;
+            const page = target.dataset.page;
             
-            if (page === 'prev') {
-                if (currentPage > 1) {
-                    if (paginationContainer === pagination1) {
-                        currentPage1--;
-                        afficherTableauAmortissement(tableauAmortissement1, amortissementContent1, parseInt(rowsPerPage1.value), currentPage1, pagination1);
-                    } else {
-                        currentPage2--;
-                        afficherTableauAmortissement(tableauAmortissement2, amortissementContent2, parseInt(rowsPerPage2.value), currentPage2, pagination2);
-                    }
+            if (page === 'first') {
+                if (container === amortissementContent1) {
+                    currentPage1 = 1;
+                    afficherTableauAmortissement(tableauAmortissement1, container, rowsPerPage, currentPage1, paginationContainer);
+                } else {
+                    currentPage2 = 1;
+                    afficherTableauAmortissement(tableauAmortissement2, container, rowsPerPage, currentPage2, paginationContainer);
+                }
+            } else if (page === 'prev') {
+                if (container === amortissementContent1) {
+                    currentPage1--;
+                    afficherTableauAmortissement(tableauAmortissement1, container, rowsPerPage, currentPage1, paginationContainer);
+                } else {
+                    currentPage2--;
+                    afficherTableauAmortissement(tableauAmortissement2, container, rowsPerPage, currentPage2, paginationContainer);
                 }
             } else if (page === 'next') {
-                if (currentPage < totalPages) {
-                    if (paginationContainer === pagination1) {
-                        currentPage1++;
-                        afficherTableauAmortissement(tableauAmortissement1, amortissementContent1, parseInt(rowsPerPage1.value), currentPage1, pagination1);
-                    } else {
-                        currentPage2++;
-                        afficherTableauAmortissement(tableauAmortissement2, amortissementContent2, parseInt(rowsPerPage2.value), currentPage2, pagination2);
-                    }
+                if (container === amortissementContent1) {
+                    currentPage1++;
+                    afficherTableauAmortissement(tableauAmortissement1, container, rowsPerPage, currentPage1, paginationContainer);
+                } else {
+                    currentPage2++;
+                    afficherTableauAmortissement(tableauAmortissement2, container, rowsPerPage, currentPage2, paginationContainer);
                 }
-            } else if (page) {
-                const pageNum = parseInt(page);
-                if (paginationContainer === pagination1) {
+            } else if (page === 'last') {
+                if (container === amortissementContent1) {
+                    currentPage1 = totalPages;
+                    afficherTableauAmortissement(tableauAmortissement1, container, rowsPerPage, currentPage1, paginationContainer);
+                } else {
+                    currentPage2 = totalPages;
+                    afficherTableauAmortissement(tableauAmortissement2, container, rowsPerPage, currentPage2, paginationContainer);
+                }
+            } else {
+                const pageNum = parseInt(page || '1');
+                if (container === amortissementContent1) {
                     currentPage1 = pageNum;
-                    afficherTableauAmortissement(tableauAmortissement1, amortissementContent1, parseInt(rowsPerPage1.value), currentPage1, pagination1);
+                    afficherTableauAmortissement(tableauAmortissement1, container, rowsPerPage, currentPage1, paginationContainer);
                 } else {
                     currentPage2 = pageNum;
-                    afficherTableauAmortissement(tableauAmortissement2, amortissementContent2, parseInt(rowsPerPage2.value), currentPage2, pagination2);
+                    afficherTableauAmortissement(tableauAmortissement2, container, rowsPerPage, currentPage2, paginationContainer);
                 }
             }
         });
     });
+    
+    // Ajout d'un écouteur d'événement pour le sélecteur de lignes par page
+    const select = paginationContainer.querySelector('select');
+    if (select) {
+        select.addEventListener('change', (e) => {
+            const target = e.target as HTMLSelectElement;
+            const newRowsPerPage = parseInt(target.value);
+            
+            if (container === amortissementContent1) {
+                rowsPerPage1.value = target.value;
+                afficherTableauAmortissement(tableauAmortissement1, container, newRowsPerPage, 1, paginationContainer);
+            } else {
+                rowsPerPage2.value = target.value;
+                afficherTableauAmortissement(tableauAmortissement2, container, newRowsPerPage, 1, paginationContainer);
+            }
+        });
+    }
 }
 
-// Fonction pour afficher le tableau de comparaison
+// Fonction pour afficher la comparaison des prêts
 function afficherComparaison() {
     if (!comparaison) return;
     
     const pret1Data = getPret1Data();
     const pret2Data = getPret2Data();
     
-    const tbody = comparisonTable.querySelector('tbody');
-    if (!tbody) return;
-    
-    tbody.innerHTML = `
+    let html = `
+        <tr>
+            <th>CRITÈRE</th>
+            <th>BANQUE ${pret1Data.nomBanque}</th>
+            <th>BANQUE ${pret2Data.nomBanque}</th>
+            <th>DIFFÉRENCE</th>
+        </tr>
         <tr>
             <td>TAEG (hors assurance)</td>
             <td>${formatPercent(comparaison.taegHorsAssurance.pret1)}</td>
             <td>${formatPercent(comparaison.taegHorsAssurance.pret2)}</td>
-            <td class="${comparaison.taegHorsAssurance.difference > 0 ? 'negative' : comparaison.taegHorsAssurance.difference < 0 ? 'positive' : 'neutral'}">
-                ${formatPercent(Math.abs(comparaison.taegHorsAssurance.difference))}
-            </td>
+            <td class="${comparaison.taegHorsAssurance.difference > 0 ? 'negative' : (comparaison.taegHorsAssurance.difference < 0 ? 'positive' : 'neutral')}">${formatPercent(Math.abs(comparaison.taegHorsAssurance.difference))}</td>
         </tr>
         <tr>
             <td>TAEG (avec assurance)</td>
             <td>${formatPercent(comparaison.taegAvecAssurance.pret1)}</td>
             <td>${formatPercent(comparaison.taegAvecAssurance.pret2)}</td>
-            <td class="${comparaison.taegAvecAssurance.difference > 0 ? 'negative' : comparaison.taegAvecAssurance.difference < 0 ? 'positive' : 'neutral'}">
-                ${formatPercent(Math.abs(comparaison.taegAvecAssurance.difference))}
-            </td>
+            <td class="${comparaison.taegAvecAssurance.difference > 0 ? 'negative' : (comparaison.taegAvecAssurance.difference < 0 ? 'positive' : 'neutral')}">${formatPercent(Math.abs(comparaison.taegAvecAssurance.difference))}</td>
         </tr>
         <tr>
             <td>Mensualité totale</td>
             <td>${formatEuro(comparaison.mensualiteTotale.pret1)}</td>
             <td>${formatEuro(comparaison.mensualiteTotale.pret2)}</td>
-            <td class="${comparaison.mensualiteTotale.difference > 0 ? 'negative' : comparaison.mensualiteTotale.difference < 0 ? 'positive' : 'neutral'}">
-                ${formatEuro(Math.abs(comparaison.mensualiteTotale.difference))}
-            </td>
+            <td class="${comparaison.mensualiteTotale.difference > 0 ? 'negative' : (comparaison.mensualiteTotale.difference < 0 ? 'positive' : 'neutral')}">${formatEuro(Math.abs(comparaison.mensualiteTotale.difference))}</td>
         </tr>
         <tr>
             <td>Coût total du crédit</td>
             <td>${formatEuro(comparaison.coutTotalCredit.pret1)}</td>
             <td>${formatEuro(comparaison.coutTotalCredit.pret2)}</td>
-            <td class="${comparaison.coutTotalCredit.difference > 0 ? 'negative' : comparaison.coutTotalCredit.difference < 0 ? 'positive' : 'neutral'}">
-                ${formatEuro(Math.abs(comparaison.coutTotalCredit.difference))}
-            </td>
+            <td class="${comparaison.coutTotalCredit.difference > 0 ? 'negative' : (comparaison.coutTotalCredit.difference < 0 ? 'positive' : 'neutral')}">${formatEuro(Math.abs(comparaison.coutTotalCredit.difference))}</td>
         </tr>
         <tr>
             <td>Taux d'endettement</td>
             <td>${formatPercent(comparaison.tauxEndettement.pret1)}</td>
             <td>${formatPercent(comparaison.tauxEndettement.pret2)}</td>
-            <td class="${comparaison.tauxEndettement.difference > 0 ? 'negative' : comparaison.tauxEndettement.difference < 0 ? 'positive' : 'neutral'}">
-                ${formatPercent(Math.abs(comparaison.tauxEndettement.difference))}
-            </td>
+            <td class="${comparaison.tauxEndettement.difference > 0 ? 'negative' : (comparaison.tauxEndettement.difference < 0 ? 'positive' : 'neutral')}">${formatPercent(Math.abs(comparaison.tauxEndettement.difference))}</td>
         </tr>
         <tr>
             <td>Durée du prêt</td>
             <td>${comparaison.dureePret.pret1} ans</td>
             <td>${comparaison.dureePret.pret2} ans</td>
-            <td class="${comparaison.dureePret.difference > 0 ? 'negative' : comparaison.dureePret.difference < 0 ? 'positive' : 'neutral'}">
-                ${Math.abs(comparaison.dureePret.difference)} ans
-            </td>
+            <td class="${comparaison.dureePret.difference > 0 ? 'negative' : (comparaison.dureePret.difference < 0 ? 'positive' : 'neutral')}">${Math.abs(comparaison.dureePret.difference)} ans</td>
         </tr>
     `;
+    
+    comparisonTable.innerHTML = html;
 }
 
-// Fonction pour générer le PDF
+// Fonction pour générer un PDF de la simulation
 function genererPDF() {
-    if (!resultat1 && !resultat2) {
+    if (!resultat1) {
         alert('Veuillez calculer au moins un prêt avant de télécharger la simulation.');
         return;
     }
@@ -526,77 +650,75 @@ function genererPDF() {
     const pret1Data = getPret1Data();
     const pret2Data = getPret2Data();
     
-    // Création du document PDF
     const doc = new jsPDF();
     
     // Titre
     doc.setFontSize(20);
-    doc.text('Simulateur de Prêts Immobiliers - Comparaison', 105, 20, { align: 'center' });
-    
-    // Date de simulation
-    doc.setFontSize(12);
-    doc.text(`Date de simulation: ${new Date().toLocaleDateString('fr-FR')}`, 105, 30, { align: 'center' });
+    doc.text('Simulation de Prêts Immobiliers', 105, 20, { align: 'center' });
     
     // Données du bien
     doc.setFontSize(16);
-    doc.text('Données du bien', 20, 40);
+    let yPos = 40;
+    doc.text('Données du bien', 20, yPos);
     
     doc.setFontSize(12);
-    doc.text(`Prix du bien FAI: ${formatEuro(bienData.prixBienFAI)}`, 20, 50);
-    doc.text(`Frais d'agence: ${formatEuro(bienData.fraisAgence)}`, 20, 56);
-    doc.text(`Montant des travaux: ${formatEuro(bienData.montantTravaux)}`, 20, 62);
-    doc.text(`Frais de notaire: ${formatEuro(bienData.fraisNotaire)}`, 20, 68);
-    doc.text(`Revenu mensuel net: ${formatEuro(bienData.revenuMensuelNet)}`, 20, 74);
-    
-    let yPos = 84;
+    yPos += 10;
+    doc.text(`Prix du bien FAI: ${formatEuro(bienData.prixBienFAI)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Frais d'agence: ${formatEuro(bienData.fraisAgence)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Montant des travaux: ${formatEuro(bienData.montantTravaux)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Frais de notaire: ${formatEuro(bienData.fraisNotaire)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Revenu mensuel net: ${formatEuro(bienData.revenuMensuelNet)}`, 20, yPos);
     
     // Résultats Prêt 1
-    if (resultat1) {
-        doc.setFontSize(16);
-        doc.text(`Prêt 1 - ${pret1Data.nomBanque}`, 20, yPos);
-        
-        doc.setFontSize(12);
-        yPos += 10;
-        doc.text(`Apport: ${formatEuro(pret1Data.apport)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Frais de dossier: ${formatEuro(pret1Data.fraisDossier)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Frais de garantie: ${formatEuro(pret1Data.fraisGarantie)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Taux nominal: ${formatPercent(pret1Data.tauxNominal)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Taux assurance: ${formatPercent(pret1Data.tauxAssurance)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Durée du prêt: ${pret1Data.dureePret} ans`, 20, yPos);
-        yPos += 6;
-        doc.text(`Différé total: ${pret1Data.differeTotal} mois`, 20, yPos);
-        yPos += 6;
-        doc.text(`Différé partiel: ${pret1Data.differePartiel} mois`, 20, yPos);
-        
-        doc.setFontSize(14);
-        yPos += 10;
-        doc.text('Résultats', 20, yPos);
-        
-        doc.setFontSize(12);
-        yPos += 8;
-        doc.text(`Montant emprunté: ${formatEuro(resultat1.montantEmprunt)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Mensualité (hors assurance): ${formatEuro(resultat1.mensualiteHorsAssurance)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Mensualité d'assurance: ${formatEuro(resultat1.mensualiteAssurance)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Mensualité totale: ${formatEuro(resultat1.mensualiteTotale)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Taux d'endettement: ${formatPercent(resultat1.mensualiteTotale / bienData.revenuMensuelNet)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`Coût total du crédit: ${formatEuro(resultat1.montantTotalInterets)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`TAEG: ${formatPercent(resultat1.taeg)}`, 20, yPos);
-        yPos += 6;
-        doc.text(`TAEG avec assurance: ${formatPercent(resultat1.taegAvecAssurance)}`, 20, yPos);
-        
-        yPos += 10;
-    }
+    doc.setFontSize(16);
+    yPos += 20;
+    doc.text(`Prêt 1 - ${pret1Data.nomBanque}`, 20, yPos);
+    
+    doc.setFontSize(12);
+    yPos += 10;
+    doc.text(`Apport: ${formatEuro(pret1Data.apport)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Frais de dossier: ${formatEuro(pret1Data.fraisDossier)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Frais de garantie: ${formatEuro(pret1Data.fraisGarantie)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Taux nominal: ${formatPercent(pret1Data.tauxNominal)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Taux assurance: ${formatPercent(pret1Data.tauxAssurance)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Durée du prêt: ${pret1Data.dureePret} ans`, 20, yPos);
+    yPos += 6;
+    doc.text(`Différé total: ${pret1Data.differeTotal} mois`, 20, yPos);
+    yPos += 6;
+    doc.text(`Différé partiel: ${pret1Data.differePartiel} mois`, 20, yPos);
+    
+    doc.setFontSize(14);
+    yPos += 10;
+    doc.text('Résultats', 20, yPos);
+    
+    doc.setFontSize(12);
+    yPos += 8;
+    doc.text(`Montant emprunté: ${formatEuro(resultat1.montantEmprunt)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Mensualité (hors assurance): ${formatEuro(resultat1.mensualiteHorsAssurance)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Mensualité d'assurance: ${formatEuro(resultat1.mensualiteAssurance)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Mensualité totale: ${formatEuro(resultat1.mensualiteTotale)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Taux d'endettement: ${formatPercent(resultat1.mensualiteTotale / bienData.revenuMensuelNet)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`Coût total du crédit: ${formatEuro(resultat1.montantTotalInterets)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`TAEG: ${formatPercent(resultat1.taeg)}`, 20, yPos);
+    yPos += 6;
+    doc.text(`TAEG avec assurance: ${formatPercent(resultat1.taegAvecAssurance)}`, 20, yPos);
+    
+    yPos += 10;
     
     // Nouvelle page si nécessaire
     if (yPos > 250 && resultat2) {
@@ -872,89 +994,310 @@ function setupTabs() {
             // Ajouter la classe active à l'onglet cliqué et au contenu correspondant
             tab.classList.add('active');
             const tabId = tab.getAttribute('data-tab');
-            if (tabId) {
-                const content = document.getElementById(tabId);
-                if (content) content.classList.add('active');
+            const tabContent = document.getElementById(tabId);
+            if (tabContent) {
+                tabContent.classList.add('active');
             }
         });
     });
 }
 
+// Fonctions pour l'encodage et le décodage des paramètres URL
+function encodeSimulationToURL(): string {
+    const bienData = getBienData();
+    const pret1Data = getPret1Data();
+    const pret2Data = getPret2Data();
+    
+    // Création d'un objet contenant toutes les données de la simulation
+    const simulationData = {
+        bien: bienData,
+        pret1: pret1Data,
+        pret2: pret2Data
+    };
+    
+    // Conversion de l'objet en chaîne JSON
+    const jsonData = JSON.stringify(simulationData);
+    
+    // Encodage en base64 pour éviter les problèmes de caractères spéciaux dans l'URL
+    const encodedData = btoa(jsonData);
+    
+    // Construction de l'URL avec les données encodées
+    const baseUrl = window.location.origin + window.location.pathname;
+    return `${baseUrl}?sim=${encodedData}`;
+}
+
+function decodeSimulationFromURL(): boolean {
+    // Récupération des paramètres de l'URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const encodedData = urlParams.get('sim');
+    
+    if (!encodedData) return false;
+    
+    try {
+        // Décodage des données
+        const jsonData = atob(encodedData);
+        const simulationData = JSON.parse(jsonData);
+        
+        // Vérification de la structure des données
+        if (!simulationData.bien || !simulationData.pret1) return false;
+        
+        // Mise à jour des champs du formulaire avec les données décodées
+        // Données du bien
+        prixBienFAIInput.value = simulationData.bien.prixBienFAI.toString();
+        fraisAgenceInput.value = simulationData.bien.fraisAgence.toString();
+        montantTravauxInput.value = simulationData.bien.montantTravaux.toString();
+        fraisNotaireInput.value = simulationData.bien.fraisNotaire.toString();
+        revenuMensuelNetInput.value = simulationData.bien.revenuMensuelNet.toString();
+        
+        // Données du prêt 1
+        nomBanque1Input.value = simulationData.pret1.nomBanque;
+        apport1Input.value = simulationData.pret1.apport.toString();
+        fraisDossier1Input.value = simulationData.pret1.fraisDossier.toString();
+        fraisGarantie1Input.value = simulationData.pret1.fraisGarantie.toString();
+        tauxNominal1Input.value = (simulationData.pret1.tauxNominal * 100).toString();
+        tauxAssurance1Input.value = (simulationData.pret1.tauxAssurance * 100).toString();
+        dureePret1Input.value = simulationData.pret1.dureePret.toString();
+        differeTotal1Input.value = simulationData.pret1.differeTotal.toString();
+        differePartiel1Input.value = simulationData.pret1.differePartiel.toString();
+        
+        // Données du prêt 2 (si présentes)
+        if (simulationData.pret2) {
+            nomBanque2Input.value = simulationData.pret2.nomBanque;
+            apport2Input.value = simulationData.pret2.apport.toString();
+            fraisDossier2Input.value = simulationData.pret2.fraisDossier.toString();
+            fraisGarantie2Input.value = simulationData.pret2.fraisGarantie.toString();
+            tauxNominal2Input.value = (simulationData.pret2.tauxNominal * 100).toString();
+            tauxAssurance2Input.value = (simulationData.pret2.tauxAssurance * 100).toString();
+            dureePret2Input.value = simulationData.pret2.dureePret.toString();
+            differeTotal2Input.value = simulationData.pret2.differeTotal.toString();
+            differePartiel2Input.value = simulationData.pret2.differePartiel.toString();
+        }
+        
+        // Mise à jour des valeurs des sliders
+        updateSliderValues();
+        
+        // Calcul et affichage des résultats
+        afficherResultats1();
+        if (simulationData.pret2) {
+            afficherResultats2();
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Erreur lors du décodage des données de simulation:', error);
+        return false;
+    }
+}
+
+// Fonction pour créer et afficher la popup de partage
+function afficherPopupPartage() {
+    if (!resultat1) {
+        alert('Veuillez calculer au moins un prêt avant de générer un lien de partage.');
+        return;
+    }
+    
+    // Génération de l'URL de partage
+    const shareUrl = encodeSimulationToURL();
+    
+    // Création de la popup
+    const popupOverlay = document.createElement('div');
+    popupOverlay.className = 'popup-overlay';
+    
+    const popupContent = document.createElement('div');
+    popupContent.className = 'popup-content';
+    
+    const popupTitle = document.createElement('h3');
+    popupTitle.textContent = 'Lien de partage de la simulation';
+    
+    const popupText = document.createElement('p');
+    popupText.textContent = 'Copiez ce lien pour partager votre simulation :';
+    
+    const linkContainer = document.createElement('div');
+    linkContainer.className = 'link-container';
+    
+    const linkInput = document.createElement('input');
+    linkInput.type = 'text';
+    linkInput.value = shareUrl;
+    linkInput.readOnly = true;
+    
+    const copyButton = document.createElement('button');
+    copyButton.textContent = 'Copier';
+    copyButton.addEventListener('click', () => {
+        linkInput.select();
+        document.execCommand('copy');
+        copyButton.textContent = 'Copié !';
+        setTimeout(() => {
+            copyButton.textContent = 'Copier';
+        }, 2000);
+    });
+    
+    const closeButton = document.createElement('button');
+    closeButton.textContent = 'Fermer';
+    closeButton.addEventListener('click', () => {
+        document.body.removeChild(popupOverlay);
+    });
+    
+    // Assemblage de la popup
+    linkContainer.appendChild(linkInput);
+    linkContainer.appendChild(copyButton);
+    
+    popupContent.appendChild(popupTitle);
+    popupContent.appendChild(popupText);
+    popupContent.appendChild(linkContainer);
+    popupContent.appendChild(closeButton);
+    
+    popupOverlay.appendChild(popupContent);
+    
+    // Ajout de la popup au document
+    document.body.appendChild(popupOverlay);
+    
+    // Sélection automatique du lien
+    linkInput.select();
+}
+
 // Initialisation
-function init() {
-    // Mise à jour initiale des valeurs des sliders
-    updateSliderValues();
+document.addEventListener('DOMContentLoaded', () => {
+    // Vérification si l'URL contient des paramètres de simulation
+    const hasSimulationData = decodeSimulationFromURL();
     
-    // Configuration des onglets
-    setupTabs();
+    // Configuration des écouteurs d'événements
+    // Mise à jour des valeurs des sliders
+    dureePret1Input.addEventListener('input', updateSliderValues);
+    differeTotal1Input.addEventListener('input', updateSliderValues);
+    differePartiel1Input.addEventListener('input', updateSliderValues);
     
-    // Événements pour les sliders
-    dureePret1Input.addEventListener('input', () => {
-        dureePret1Value.textContent = `${dureePret1Input.value} ans`;
-        afficherResultats1();
-    });
+    dureePret2Input.addEventListener('input', updateSliderValues);
+    differeTotal2Input.addEventListener('input', updateSliderValues);
+    differePartiel2Input.addEventListener('input', updateSliderValues);
     
-    differeTotal1Input.addEventListener('input', () => {
-        differeTotal1Value.textContent = `${differeTotal1Input.value} mois`;
-        afficherResultats1();
-    });
+    // Calcul des résultats lors de la modification des champs
+    const inputsPret1 = [
+        prixBienFAIInput, fraisAgenceInput, montantTravauxInput, fraisNotaireInput, revenuMensuelNetInput,
+        nomBanque1Input, apport1Input, fraisDossier1Input, fraisGarantie1Input, tauxNominal1Input,
+        tauxAssurance1Input, dureePret1Input, differeTotal1Input, differePartiel1Input
+    ];
     
-    differePartiel1Input.addEventListener('input', () => {
-        differePartiel1Value.textContent = `${differePartiel1Input.value} mois`;
-        afficherResultats1();
-    });
-    
-    dureePret2Input.addEventListener('input', () => {
-        dureePret2Value.textContent = `${dureePret2Input.value} ans`;
-        afficherResultats2();
-    });
-    
-    differeTotal2Input.addEventListener('input', () => {
-        differeTotal2Value.textContent = `${differeTotal2Input.value} mois`;
-        afficherResultats2();
-    });
-    
-    differePartiel2Input.addEventListener('input', () => {
-        differePartiel2Value.textContent = `${differePartiel2Input.value} mois`;
-        afficherResultats2();
-    });
-    
-    // Événements pour les champs de saisie du bien
-    [prixBienFAIInput, fraisAgenceInput, montantTravauxInput, fraisNotaireInput, revenuMensuelNetInput].forEach(input => {
+    inputsPret1.forEach(input => {
         input.addEventListener('input', () => {
             afficherResultats1();
+        });
+    });
+    
+    const inputsPret2 = [
+        nomBanque2Input, apport2Input, fraisDossier2Input, fraisGarantie2Input, tauxNominal2Input,
+        tauxAssurance2Input, dureePret2Input, differeTotal2Input, differePartiel2Input
+    ];
+    
+    inputsPret2.forEach(input => {
+        input.addEventListener('input', () => {
             afficherResultats2();
         });
     });
     
-    // Événements pour les champs de saisie du prêt 1
-    [nomBanque1Input, apport1Input, fraisDossier1Input, fraisGarantie1Input, tauxNominal1Input, tauxAssurance1Input].forEach(input => {
-        input.addEventListener('input', afficherResultats1);
-    });
+    // Configuration des onglets
+    setupTabs();
     
-    // Événements pour les champs de saisie du prêt 2
-    [nomBanque2Input, apport2Input, fraisDossier2Input, fraisGarantie2Input, tauxNominal2Input, tauxAssurance2Input].forEach(input => {
-        input.addEventListener('input', afficherResultats2);
-    });
+    // Configuration du bouton de partage
+    if (shareBtn) {
+        shareBtn.addEventListener('click', afficherPopupPartage);
+    }
     
-    // Événement pour le changement du nombre de lignes par page
-    rowsPerPage1.addEventListener('change', () => {
-        currentPage1 = 1; // Réinitialiser à la première page
-        afficherTableauAmortissement(tableauAmortissement1, amortissementContent1, parseInt(rowsPerPage1.value), currentPage1, pagination1);
-    });
+    // Initialisation des valeurs des sliders
+    updateSliderValues();
     
-    rowsPerPage2.addEventListener('change', () => {
-        currentPage2 = 1; // Réinitialiser à la première page
-        afficherTableauAmortissement(tableauAmortissement2, amortissementContent2, parseInt(rowsPerPage2.value), currentPage2, pagination2);
-    });
-    
-    // Événement pour le bouton de téléchargement
-    downloadBtn.addEventListener('click', genererPDF);
-    
-    // Calcul initial
-    afficherResultats1();
-    afficherResultats2();
-}
+    // Calcul initial des résultats si aucune donnée n'a été chargée depuis l'URL
+    if (!hasSimulationData) {
+        afficherResultats1();
+    }
+});
 
-// Lancement de l'initialisation quand le DOM est chargé
-document.addEventListener('DOMContentLoaded', init);
+// Ajout de styles CSS pour la popup
+const popupStyles = document.createElement('style');
+popupStyles.textContent = `
+    .popup-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+    
+    .popup-content {
+        background-color: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        max-width: 90%;
+        width: 500px;
+    }
+    
+    .popup-content h3 {
+        margin-top: 0;
+        color: var(--primary-color);
+    }
+    
+    .link-container {
+        display: flex;
+        margin: 1rem 0;
+    }
+    
+    .link-container input {
+        flex: 1;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px 0 0 4px;
+        font-size: 0.9rem;
+    }
+    
+    .link-container button {
+        padding: 0.75rem 1rem;
+        background-color: var(--primary-color);
+        color: white;
+        border: none;
+        border-radius: 0 4px 4px 0;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    
+    .popup-content > button {
+        display: block;
+        margin: 1rem auto 0;
+        padding: 0.75rem 1.5rem;
+        background-color: var(--light-gray);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    
+    .popup-content > button:hover {
+        background-color: var(--medium-gray);
+    }
+    
+    @media (max-width: 768px) {
+        .popup-content {
+            width: 90%;
+            padding: 1.5rem;
+        }
+        
+        .link-container {
+            flex-direction: column;
+        }
+        
+        .link-container input {
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .link-container button {
+            border-radius: 4px;
+        }
+    }
+`;
+
+document.head.appendChild(popupStyles);
